@@ -1,4 +1,4 @@
-//ff-c++-LIBRARY-dep: cxx11 [mkl|blas] mpi pthread htool bemtool boost
+//ff-c++-LIBRARY-dep: cxx11 [mkl|blas] [petsccomplex] mpi pthread htool bemtool boost
 //ff-c++-cpp-dep:
 // for def  M_PI under windows in <cmath>
 #define _USE_MATH_DEFINES
@@ -20,6 +20,12 @@
 #include <bemtool/operator/operator.hpp>
 #include <bemtool/miscellaneous/htool_wrap.hpp>
 #include "PlotStream.hpp"
+
+#ifdef WITH_petsccomplex
+#include <petsc.h>
+#include "PETSc.hpp"
+typedef PETSc::DistributedCSR< HpSchwarz< PetscScalar > > Dmat;
+#endif
 
 #include "common.hpp"
 
@@ -151,28 +157,50 @@ void Mesh2Bemtool(const ffmesh &Th, Geometry &node) {
     }
 }
 
-template<class K>
-AnyType ToDense(Stack stack,Expression emat,Expression einter,int init)
+template<class Type, class K>
+AnyType To(Stack stack,Expression emat,Expression einter,int init)
 {
     ffassert(einter);
-    HMatrixVirt<K>** Hmat =GetAny<HMatrixVirt<K>** >((*einter)(stack));
+    HMatrixVirt<K>** Hmat = GetAny<HMatrixVirt<K>** >((*einter)(stack));
     ffassert(Hmat && *Hmat);
     HMatrixVirt<K>& H = **Hmat;
-    Matrix<K> mdense = H.to_dense_perm();
-    const std::vector<K>& vdense = mdense.get_mat();
-    
-    KNM<K>* M =GetAny<KNM<K>*>((*emat)(stack));
-    
-    for (int i=0; i< mdense.nb_rows(); i++)
-        for (int j=0; j< mdense.nb_cols(); j++)
-            (*M)(i,j) = mdense(i,j);
-    
-    return M;
+    if(std::is_same<Type, KNM<K>*>::value) {
+        Matrix<K> mdense = H.to_dense_perm();
+        const std::vector<K>& vdense = mdense.get_mat();
+        KNM<K>* M = GetAny<KNM<K>*>((*emat)(stack));
+        for (int i=0; i< mdense.nb_rows(); i++)
+            for (int j=0; j< mdense.nb_cols(); j++)
+                (*M)(i,j) = mdense(i,j);
+        return M;
+    }
+    else {
+#ifndef WITH_petsccomplex
+        ffassert(0);
+#else
+        Dmat* M = GetAny<Dmat*>((*emat)(stack));
+        M->dtor();
+        MatCreate(MPI_COMM_WORLD, &M->_petsc);
+        MatSetType(M->_petsc, MATMPIDENSE);
+        // MatSetSizes(, , , , );
+        // MatMPIDenseSetPreallocation(M->_petsc, PETSC_NULL);
+        // PetscScalar* array;
+        // MatDenseGetArray(M->_petsc, &array);
+        // if (array) {
+        //    for (int i = 0; i < mdense.nb_rows(); ++i)
+        //        for (int j = 0; j < mdense.nb_cols(); ++j)
+        //            array[i + j * mdense.nb_rows()] = mdense(i,j);
+        // }
+        // MatDenseRestoreArray(M->_petsc, &array);
+        // MatAssemblyBegin(M->_petsc, MAT_FINAL_ASSEMBLY);
+        // MatAssemblyEnd(M->_petsc, MAT_FINAL_ASSEMBLY);
+        return M;
+#endif
+    }
 }
 
-template<class K, int init>
-AnyType ToDense(Stack stack,Expression emat,Expression einter)
-{ return ToDense<K>(stack,emat,einter,init);}
+template<class Type, class K, int init>
+AnyType To(Stack stack,Expression emat,Expression einter)
+{ return To<Type, K>(stack,emat,einter,init);}
 
 template<class V, class K>
 class Prod {
@@ -600,10 +628,17 @@ void addHmat() {
     
     // to dense:
     TheOperators->Add("=",
-                      new OneOperator2_<KNM<K>*, KNM<K>*, HMatrixVirt<K>**,E_F_StackF0F0>(ToDense<K, 1>));
+                      new OneOperator2_<KNM<K>*, KNM<K>*, HMatrixVirt<K>**,E_F_StackF0F0>(To<KNM<K>, K, 1>));
     TheOperators->Add("<-",
-                      new OneOperator2_<KNM<K>*, KNM<K>*, HMatrixVirt<K>**,E_F_StackF0F0>(ToDense<K, 0>));
-
+                      new OneOperator2_<KNM<K>*, KNM<K>*, HMatrixVirt<K>**,E_F_StackF0F0>(To<KNM<K>, K, 0>));
+#ifdef WITH_petsccomplex
+    if(std::is_same<K, PetscScalar>::value) {
+        TheOperators->Add("=",
+                new OneOperator2_<Dmat*, Dmat*, HMatrixVirt<K>**,E_F_StackF0F0>(To<Dmat, K, 1>));
+        TheOperators->Add("<-",
+                new OneOperator2_<Dmat*, Dmat*, HMatrixVirt<K>**,E_F_StackF0F0>(To<Dmat, K, 0>));
+    }
+#endif
     Dcl_Type<const typename CompressMat<K>::Op *>();
     //Add<const typename assembleHMatrix<LR, K>::Op *>("<-","(", new assembleHMatrix<LR, K>);
 
