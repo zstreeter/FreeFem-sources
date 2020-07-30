@@ -67,12 +67,14 @@ public:
     virtual const MPI_Comm& get_comm() const = 0;
     virtual int get_rankworld() const = 0;
     virtual int get_sizeworld() const = 0;
+    virtual int get_local_size() const = 0;
     virtual const std::vector<SubMatrix<K>*>& get_MyNearFieldMats() const = 0;
     virtual const LowRankMatrix<K,GeometricClusteringDDM>& get_MyFarFieldMats(int i) const = 0;
     virtual int get_MyFarFieldMats_size() const = 0;
     virtual const std::vector<SubMatrix<K>*>& get_MyStrictlyDiagNearFieldMats() const = 0;
     virtual Matrix<K> to_dense_perm() const = 0;
-    
+    virtual Matrix<K> to_local_dense() const = 0;
+
     virtual ~HMatrixVirt() {};
 };
 
@@ -92,11 +94,13 @@ public:
     const MPI_Comm& get_comm() const {return H.get_comm();}
     int get_rankworld() const {return H.get_rankworld();}
     int get_sizeworld() const {return H.get_sizeworld();}
+    int get_local_size() const {return H.get_local_size();}
     const std::vector<SubMatrix<K>*>& get_MyNearFieldMats() const {return H.get_MyNearFieldMats();}
     const LowRankMatrix<K,GeometricClusteringDDM>& get_MyFarFieldMats(int i) const {return *(H.get_MyFarFieldMats()[i]);}
     int get_MyFarFieldMats_size() const {return H.get_MyFarFieldMats().size();}
     const std::vector<SubMatrix<K>*>& get_MyStrictlyDiagNearFieldMats() const {return H.get_MyStrictlyDiagNearFieldMats();}
     Matrix<K> to_dense_perm() const {return H.to_dense_perm();}
+    Matrix<K> to_local_dense() const {return H.to_local_dense();}
 };
 
 
@@ -178,22 +182,23 @@ AnyType To(Stack stack,Expression emat,Expression einter,int init)
 #ifndef WITH_petsccomplex
         ffassert(0);
 #else
+        Matrix<K> mdense = H.to_local_dense();
         Dmat* M = GetAny<Dmat*>((*emat)(stack));
         M->dtor();
-        MatCreate(MPI_COMM_WORLD, &M->_petsc);
+        MatCreate(H.get_comm(), &M->_petsc);
         MatSetType(M->_petsc, MATMPIDENSE);
-        // MatSetSizes(, , , , );
-        // MatMPIDenseSetPreallocation(M->_petsc, PETSC_NULL);
-        // PetscScalar* array;
-        // MatDenseGetArray(M->_petsc, &array);
-        // if (array) {
-        //    for (int i = 0; i < mdense.nb_rows(); ++i)
-        //        for (int j = 0; j < mdense.nb_cols(); ++j)
-        //            array[i + j * mdense.nb_rows()] = mdense(i,j);
-        // }
-        // MatDenseRestoreArray(M->_petsc, &array);
-        // MatAssemblyBegin(M->_petsc, MAT_FINAL_ASSEMBLY);
-        // MatAssemblyEnd(M->_petsc, MAT_FINAL_ASSEMBLY);
+        MatSetSizes(M->_petsc, H.get_local_size() ,PETSC_DECIDE , H.nb_rows(), H.nb_cols());
+        MatMPIDenseSetPreallocation(M->_petsc, PETSC_NULL);
+        PetscScalar* array;
+        MatDenseGetArray(M->_petsc, &array);
+        if (array) {
+           for (int i = 0; i < mdense.nb_rows(); ++i)
+               for (int j = 0; j < mdense.nb_cols(); ++j)
+                   array[i + j * mdense.nb_rows()] = mdense(i,j);
+        }
+        MatDenseRestoreArray(M->_petsc, &array);
+        MatAssemblyBegin(M->_petsc, MAT_FINAL_ASSEMBLY);
+        MatAssemblyEnd(M->_petsc, MAT_FINAL_ASSEMBLY);
         return M;
 #endif
     }
