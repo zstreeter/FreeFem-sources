@@ -1710,12 +1710,12 @@ void ff_BIO_Generator(HMatrixVirt<R>** Hmat, BemKernel *typeKernel, Dof<P>& dof,
         if(mpirank == 0) cout << "kernel definition error" << endl; ffassert(0);}
    // build the Hmat
    if ( compressor == "" || compressor == "partialACA")
-        *Hmat = new HMatrixImpl<partialACA,R>(*generator,p1,-1,comm);
+        *Hmat = new HMatrixImpl<R,partialACA>(*generator,p1,false,-1,comm);
     
     else if (compressor == "fullACA")
-        *Hmat = new HMatrixImpl<fullACA,R>(*generator,p1,-1,comm);
+        *Hmat = new HMatrixImpl<R,fullACA>(*generator,p1,false,-1,comm);
     else if (compressor == "SVD")
-        *Hmat = new HMatrixImpl<SVD,R>(*generator,p1,-1,comm);
+        *Hmat = new HMatrixImpl<R,SVD>(*generator,p1,false,-1,comm);
     else {
         cerr << "Error: unknown htool compressor \""+compressor+"\"" << endl;
         ffassert(0);
